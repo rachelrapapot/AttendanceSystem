@@ -1,0 +1,25 @@
+# ── Secrets & local config ────────────────────────────────────────────────────
+.env
+*.env.local
+# appsettings.Development.json contains real dev credentials — keep out of git
+# Comment this line out only if the file holds non-sensitive placeholder values
+AttendanceSystem.API/appsettings.Development.json
+
+# ── .NET build artifacts ───────────────────────────────────────────────────────
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# ── Rider / JetBrains ─────────────────────────────────────────────────────────
+.idea/
+
+# ── VS Code ───────────────────────────────────────────────────────────────────
+.vscode/
+
+# ── Node / frontend ───────────────────────────────────────────────────────────
+attendance-frontend/node_modules/
+attendance-frontend/dist/
+attendance-frontend/.env
+attendance-frontend/.env.local
