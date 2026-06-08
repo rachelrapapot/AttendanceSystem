@@ -12,6 +12,7 @@ public interface IAdminService
     Task<EmployeeResponse> CreateEmployeeAsync(CreateEmployeeRequest request, int adminId);
     Task<EmployeeResponse?> UpdateEmployeeAsync(int employeeId, UpdateEmployeeRequest request, int adminId);
     Task<bool> TerminateEmployeeAsync(int employeeId, int adminId);
+    Task<int?> RevokeAllSessionsAsync(int employeeId, int adminId);
     Task<List<AuditLogResponse>> GetAuditLogsAsync();
 }
 
@@ -108,13 +109,44 @@ public class AdminService : IAdminService
         await using var tx = _db.Database.IsRelational()
             ? await _db.Database.BeginTransactionAsync()
             : (IDbContextTransaction?)null;
+
         employee.Status = "Terminated";
+
+        // Revoke all active refresh tokens atomically with the status change.
+        // Without this, a valid JWT (up to 15 min) plus an un-revoked refresh token
+        // could keep a terminated employee's session alive for up to 7 days.
+        var activeTokens = await _db.RefreshTokens
+            .Where(rt => rt.EmployeeId == employeeId && rt.RevokedAt == null)
+            .ToListAsync();
+        foreach (var t in activeTokens)
+            t.RevokedAt = now;
+
         await _audit.LogAsync(_db, "AdminAction", adminId,
-            new { action = "terminateEmployee", employeeId }, now);
+            new { action = "terminateEmployee", employeeId, sessionsRevoked = activeTokens.Count }, now);
         await _db.SaveChangesAsync();
         if (tx != null) await tx.CommitAsync();
 
         return true;
+    }
+
+    public async Task<int?> RevokeAllSessionsAsync(int employeeId, int adminId)
+    {
+        var now = await _timeService.GetZurichTimeAsync();
+
+        var exists = await _db.Employees.AnyAsync(e => e.EmployeeId == employeeId);
+        if (!exists) return null;
+
+        var activeTokens = await _db.RefreshTokens
+            .Where(rt => rt.EmployeeId == employeeId && rt.RevokedAt == null)
+            .ToListAsync();
+        foreach (var t in activeTokens)
+            t.RevokedAt = now;
+
+        await _audit.LogAsync(_db, "AdminAction", adminId,
+            new { action = "revokeAllSessions", employeeId, sessionsRevoked = activeTokens.Count }, now);
+        await _db.SaveChangesAsync();
+
+        return activeTokens.Count;
     }
 
     public async Task<List<AuditLogResponse>> GetAuditLogsAsync()

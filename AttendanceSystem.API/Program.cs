@@ -3,6 +3,7 @@ using AttendanceSystem.API.Data;
 using AttendanceSystem.API.Middleware;
 using AttendanceSystem.API.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
@@ -120,7 +121,7 @@ builder.Services.AddCors(opts =>
         var origin = builder.Configuration["Cors:AllowedOrigin"]!;
         policy.WithOrigins(origin)
               .AllowAnyHeader()
-              .AllowAnyMethod()
+              .WithMethods("GET", "POST", "PUT", "DELETE")
               .AllowCredentials();
     });
 });
@@ -193,6 +194,16 @@ builder.Services.AddControllers();
 var app = builder.Build();
 
 // ── Middleware pipeline (order matters) ───────────────────────────────────────
+
+// Must be first: rewrites HttpContext.Connection.RemoteIpAddress to the real client IP
+// when the app runs behind a reverse proxy (nginx, Azure Application Gateway, etc.).
+// By default only loopback proxies are trusted — add production proxy IPs to KnownProxies
+// or KnownNetworks in appsettings.json before deploying behind a non-loopback proxy.
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+});
+
 app.UseMiddleware<ExceptionMiddleware>();
 app.UseMiddleware<SecurityHeadersMiddleware>(); // applies a relaxed CSP for /swagger/* paths
 app.UseMiddleware<RequestLoggingMiddleware>(); // after exception handler so errors are still logged

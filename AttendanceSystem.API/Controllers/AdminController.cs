@@ -113,6 +113,31 @@ public class AdminController(IAdminService adminService, IAttendanceService atte
     }
 
     /// <summary>
+    /// Revokes all active refresh token sessions for an employee (emergency lockdown).
+    /// </summary>
+    /// <remarks>
+    /// Use when an account is suspected to be compromised. All active sessions are invalidated
+    /// immediately; the next token refresh will fail and force a re-login. The employee's access
+    /// token (up to 15 min remaining) cannot be revoked — that is expected and by design.
+    /// This action is audited.
+    /// </remarks>
+    /// <param name="id">ID of the employee whose sessions should be revoked.</param>
+    /// <response code="200">Sessions revoked. Returns the count of sessions that were active.</response>
+    /// <response code="401">Not authenticated.</response>
+    /// <response code="403">Authenticated user does not have the <c>Admin</c> role.</response>
+    /// <response code="404">No employee with the specified <paramref name="id"/> exists.</response>
+    [HttpDelete("employees/{id:int}/sessions")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> RevokeAllSessions(int id)
+    {
+        var revoked = await adminService.RevokeAllSessionsAsync(id, GetAdminId());
+        return revoked == null ? NotFound() : Ok(new { sessionsRevoked = revoked });
+    }
+
+    /// <summary>
     /// Generates an attendance report for all employees, with optional filters.
     /// </summary>
     /// <remarks>

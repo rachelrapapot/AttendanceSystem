@@ -16,6 +16,12 @@ public interface IAuthService
 
 public class AuthService : IAuthService
 {
+    // Prevents timing attacks that reveal whether an email exists in the database.
+    // BCrypt.Verify always runs regardless of whether the account was found; an attacker
+    // measuring response latency cannot distinguish "email unknown" from "wrong password".
+    private const string DummyHash =
+        "$2a$12$R9h/cIPz0gi.URNNX3lh2OPST9/PgBkqquzi.Ee07KJlW26DMzIAm";
+
     private readonly AppDbContext  _db;
     private readonly ITokenService _tokenService;
     private readonly IAuditService _audit;
@@ -45,7 +51,10 @@ public class AuthService : IAuthService
             .Include(e => e.Role)
             .FirstOrDefaultAsync(e => e.Email == request.Email && e.Status == "Active");
 
-        if (employee == null || !BCrypt.Net.BCrypt.Verify(request.Password, employee.PasswordHash))
+        // Always call BCrypt — prevents timing attacks (see DummyHash constant above)
+        var passwordOk = BCrypt.Net.BCrypt.Verify(request.Password, employee?.PasswordHash ?? DummyHash);
+
+        if (employee == null || !passwordOk)
         {
             _metrics.LoginFailures.Add(1);
             _logger.LogWarning("[AUTH] Failed login for {Email} from {IP}", request.Email, ipAddress);
@@ -87,12 +96,18 @@ public class AuthService : IAuthService
 
     private async Task AlertOnBruteForceAsync(string email, string ipAddress, DateTimeOffset now)
     {
-        // Count failures for this email in the last 15 minutes (same window as the rate limiter)
+        // Search for the exact JSON key-value pair rather than a bare substring.
+        // Contains() translates to SQL LIKE '%value%' with a parameterized value (no injection risk),
+        // but a bare email like "bob@x.com" could accidentally match "bob@x.com.evil.com" in the JSON.
+        // Anchoring on the surrounding quotes gives an exact field-level match.
+        var emailPattern = $"\"email\":\"{email}\"";
+        var ipPattern    = $"\"ip\":\"{ipAddress}\"";
+
         var recentEmailFailures = await _db.AuditLogs
             .CountAsync(al => al.Action    == "LogoutFailed"
                            && al.Timestamp >= now.AddMinutes(-15)
                            && al.Details   != null
-                           && al.Details.Contains(email));
+                           && al.Details.Contains(emailPattern));
 
         if (recentEmailFailures >= 5)
             _logger.LogCritical(
@@ -104,7 +119,7 @@ public class AuthService : IAuthService
             .CountAsync(al => al.Action    == "LogoutFailed"
                            && al.Timestamp >= now.AddMinutes(-15)
                            && al.Details   != null
-                           && al.Details.Contains(ipAddress));
+                           && al.Details.Contains(ipPattern));
 
         if (recentIpFailures >= 10)
             _logger.LogCritical(
